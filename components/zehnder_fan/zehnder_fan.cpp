@@ -466,10 +466,11 @@ void ZehnderFanComponent::control(const fan::FanCall &call) {
         }
     }
     
-    // For now, timer is not implemented via Home Assistant fan model. Could be a separate service.
-    uint8_t timer = 0; 
-    
-    ESP_LOGD(TAG, "Setting fan speed to level %d", this->pending_fan_speed_);
+    // Match physical remote behaviour: on = run for fixed interval, off = immediate return to AUTO.
+    // The ComfoAir auto-reverts after the timer expires, matching the 10/15/30/60 min remote buttons.
+    uint8_t timer = this->pending_fan_state_ ? 60 : 0;
+
+    ESP_LOGD(TAG, "Setting fan speed to level %d, timer %d min", this->pending_fan_speed_, timer);
     
     // Start async operation
     this->component_state_ = ComponentOperationState::SETTING_SPEED;
