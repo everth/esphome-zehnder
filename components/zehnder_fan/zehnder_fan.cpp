@@ -382,6 +382,10 @@ void ZehnderFanComponent::setup() {
     this->nrf_radio_.set_spi_parent(this->spi_parent_);
     this->nrf_radio_.set_cs_pin(this->cs_pin_);
     this->nrf_radio_.setup_pins(this->pwr_pin_, this->ce_pin_, this->txen_pin_, this->dr_pin_);
+    this->nrf_radio_.set_cd_pin(this->cd_pin_);
+    this->nrf_radio_.set_am_pin(this->am_pin_);
+    if (this->cd_pin_) this->cd_pin_->setup();
+    if (this->am_pin_) this->am_pin_->setup();
     this->nrf_radio_.init();
 
     this->fan_protocol_ = make_unique<ZehnderFanProtocol>(&this->nrf_radio_);
@@ -402,9 +406,17 @@ void ZehnderFanComponent::setup() {
 }
 
 void ZehnderFanComponent::loop() {
+    // Sniffer mode bypasses the state machine: just poll the radio and log every frame.
+    if (this->sniffer_active_) {
+        if (this->nrf_radio_.read_rx_payload(this->sniffer_rx_buffer_, FAN_FRAMESIZE)) {
+            this->log_sniffed_frame_();
+        }
+        return;
+    }
+
     // Process async radio operations
     this->fan_protocol_->process();
-    
+
     // Handle operation completion
     if (this->fan_protocol_->is_operation_complete()) {
         this->handle_operation_complete();
@@ -435,11 +447,15 @@ fan::FanTraits ZehnderFanComponent::get_traits() {
 }
 
 void ZehnderFanComponent::control(const fan::FanCall &call) {
+    if (this->sniffer_active_) {
+        ESP_LOGW(TAG, "Cannot control fan: Sniffer mode active. Stop sniffer first.");
+        return;
+    }
     if (!this->pairing_info_.has_value()) {
         ESP_LOGE(TAG, "Cannot control fan: Not paired.");
         return;
     }
-    
+
     // Check if radio is busy
     if (this->component_state_ != ComponentOperationState::IDLE) {
         ESP_LOGW(TAG, "Cannot control fan: Radio operation in progress, ignoring request.");
@@ -479,16 +495,81 @@ void ZehnderFanComponent::control(const fan::FanCall &call) {
 
 void ZehnderFanComponent::start_pairing() {
     ESP_LOGI(TAG, "Pairing service called. Attempting to discover and pair with fan...");
-    
+
+    if (this->sniffer_active_) {
+        ESP_LOGW(TAG, "Cannot start pairing: Sniffer mode active. Stop sniffer first.");
+        return;
+    }
+
     // Check if radio is busy
     if (this->component_state_ != ComponentOperationState::IDLE) {
         ESP_LOGW(TAG, "Cannot start pairing: Radio operation in progress.");
         return;
     }
-    
+
     // Start async pairing operation
     this->component_state_ = ComponentOperationState::PAIRING;
     this->fan_protocol_->start_pairing();
+}
+
+// ---------------------------------------------------------------------------
+// Sniffer mode
+// ---------------------------------------------------------------------------
+void ZehnderFanComponent::start_sniffer() {
+    if (this->sniffer_active_) {
+        ESP_LOGW(TAG, "Sniffer already active.");
+        return;
+    }
+    if (this->component_state_ != ComponentOperationState::IDLE) {
+        ESP_LOGW(TAG, "Cannot start sniffer: Radio operation in progress.");
+        return;
+    }
+    if (!this->pairing_info_.has_value()) {
+        ESP_LOGE(TAG, "Cannot start sniffer: Not paired. Network address unknown.");
+        return;
+    }
+
+    // Listen on the paired network address. All devices on the fan share this
+    // address, so we'll also hear the physical remote's packets.
+    const uint32_t net_id = this->pairing_info_->network_id;
+    this->nrf_radio_.set_tx_address(net_id);
+    this->nrf_radio_.set_rx_address(net_id);
+    this->nrf_radio_.set_mode_receive();
+
+    this->sniffer_active_ = true;
+    ESP_LOGI(TAG, "Sniffer started on network 0x%08X. All received frames will be logged.", net_id);
+}
+
+void ZehnderFanComponent::stop_sniffer() {
+    if (!this->sniffer_active_) {
+        ESP_LOGW(TAG, "Sniffer not active.");
+        return;
+    }
+    this->sniffer_active_ = false;
+    this->nrf_radio_.set_mode_idle();
+    // Reset protocol state so normal operation resumes cleanly.
+    this->fan_protocol_->reset_operation_state();
+    ESP_LOGI(TAG, "Sniffer stopped. Normal operation resumed.");
+}
+
+void ZehnderFanComponent::log_sniffed_frame_() {
+    const uint8_t *p = this->sniffer_rx_buffer_;
+    int cd = this->nrf_radio_.read_cd();
+    int am = this->nrf_radio_.read_am();
+
+    // Decode the 16-byte frame into its known fields.
+    // Layout matches start_set_speed / pairing frames:
+    //   [0] rx_type, [1] rx_id, [2] tx_type, [3] tx_id, [4] TTL,
+    //   [5] frame_type, [6] param_count, [7..] params
+    ESP_LOGI(TAG,
+             "[SNIFF] rx_type=0x%02X rx_id=0x%02X tx_type=0x%02X tx_id=0x%02X "
+             "ttl=0x%02X frame=0x%02X params=%u p1=0x%02X p2=0x%02X "
+             "cd=%d am=%d | raw=%02X%02X%02X%02X%02X%02X%02X%02X"
+             "%02X%02X%02X%02X%02X%02X%02X%02X",
+             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8],
+             cd, am,
+             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
+             p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]);
 }
 
 void ZehnderFanComponent::handle_operation_complete() {

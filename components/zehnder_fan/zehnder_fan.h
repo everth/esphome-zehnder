@@ -60,6 +60,9 @@ class NRF905Controller : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST,
 public:
     void setup_pins(GPIOPin *pwr_pin, GPIOPin *ce_pin, GPIOPin *txen_pin, GPIOPin *dr_pin);
     void set_cs_pin(GPIOPin *cs_pin) { this->cs_ = cs_pin; }
+    // Optional diagnostic pins (sniffer mode). May be nullptr.
+    void set_cd_pin(GPIOPin *pin) { this->cd_pin_ = pin; }
+    void set_am_pin(GPIOPin *pin) { this->am_pin_ = pin; }
     bool init();
     void set_mode_idle();
     void set_mode_receive();
@@ -72,14 +75,19 @@ public:
     bool read_rx_payload(uint8_t *buffer, size_t size);
 
     bool is_data_ready() { return this->dr_pin_->digital_read(); }
+    // Returns -1 if pin not configured.
+    int read_cd() { return this->cd_pin_ ? (this->cd_pin_->digital_read() ? 1 : 0) : -1; }
+    int read_am() { return this->am_pin_ ? (this->am_pin_->digital_read() ? 1 : 0) : -1; }
 
 private:
     void write_config_registers(const uint8_t *config, size_t size);
-    
+
     GPIOPin *pwr_pin_{nullptr};
     GPIOPin *ce_pin_{nullptr};
     GPIOPin *txen_pin_{nullptr};
     GPIOPin *dr_pin_{nullptr};
+    GPIOPin *cd_pin_{nullptr};
+    GPIOPin *am_pin_{nullptr};
 };
 
 
@@ -191,12 +199,20 @@ public:
     // Service function to initiate pairing
     void start_pairing();
 
+    // Sniffer mode — passively log every frame received on the paired network.
+    // While sniffing, normal fan control and pairing are rejected.
+    void start_sniffer();
+    void stop_sniffer();
+    bool is_sniffing() const { return this->sniffer_active_; }
+
     // Pin Setters from YAML
     void set_pwr_pin(GPIOPin *pin) { this->pwr_pin_ = pin; }
     void set_ce_pin(GPIOPin *pin) { this->ce_pin_ = pin; }
     void set_txen_pin(GPIOPin *pin) { this->txen_pin_ = pin; }
     void set_dr_pin(GPIOPin *pin) { this->dr_pin_ = pin; }
     void set_cs_pin(GPIOPin *pin) { this->cs_pin_ = pin; }
+    void set_cd_pin(GPIOPin *pin) { this->cd_pin_ = pin; }
+    void set_am_pin(GPIOPin *pin) { this->am_pin_ = pin; }
     void set_spi_parent(spi::SPIComponent *parent) { this->spi_parent_ = parent; }
 
 protected:
@@ -215,15 +231,22 @@ protected:
     GPIOPin *txen_pin_;
     GPIOPin *dr_pin_;
     GPIOPin *cs_pin_;
+    GPIOPin *cd_pin_{nullptr};  // optional — sniffer diagnostics
+    GPIOPin *am_pin_{nullptr};  // optional — sniffer diagnostics
     spi::SPIComponent *spi_parent_;
 
     std::optional<FanPairingInfo> pairing_info_;
     ComponentOperationState component_state_{ComponentOperationState::IDLE};
-    
+
     // Pending fan call data
     bool pending_state_change_{false};
     bool pending_fan_state_{false};
     int pending_fan_speed_{1};
+
+    // Sniffer state
+    bool sniffer_active_{false};
+    uint8_t sniffer_rx_buffer_[FAN_FRAMESIZE]{0};
+    void log_sniffed_frame_();
 };
 
 } // namespace zehnder_fan

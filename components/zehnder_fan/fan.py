@@ -12,6 +12,8 @@ CONF_DR_PIN = "dr_pin"
 CONF_PWR_PIN = "pwr_pin"
 CONF_CS_PIN = "cs_pin"
 CONF_CE_PIN = "ce_pin"
+CONF_CD_PIN = "cd_pin"  # optional — sniffer diagnostics
+CONF_AM_PIN = "am_pin"  # optional — sniffer diagnostics
 
 zehnder_fan_ns = cg.esphome_ns.namespace("zehnder_fan")
 ZehnderFanComponent = zehnder_fan_ns.class_("ZehnderFanComponent", fan.Fan, cg.PollingComponent)
@@ -26,6 +28,8 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_TXEN_PIN): pins.gpio_output_pin_schema,
             cv.Required(CONF_DR_PIN): pins.gpio_input_pin_schema,
             cv.Required(CONF_CS_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_CD_PIN): pins.gpio_input_pin_schema,
+            cv.Optional(CONF_AM_PIN): pins.gpio_input_pin_schema,
             cv.Required(spi.CONF_SPI_ID): cv.use_id(spi.SPIComponent),
         }
     )
@@ -52,3 +56,9 @@ async def to_code(config):
     cg.add(var.set_dr_pin(dr_pin))
     cs_pin = await cg.gpio_pin_expression(config[CONF_CS_PIN])
     cg.add(var.set_cs_pin(cs_pin))
+    if CONF_CD_PIN in config:
+        cd_pin = await cg.gpio_pin_expression(config[CONF_CD_PIN])
+        cg.add(var.set_cd_pin(cd_pin))
+    if CONF_AM_PIN in config:
+        am_pin = await cg.gpio_pin_expression(config[CONF_AM_PIN])
+        cg.add(var.set_am_pin(am_pin))
