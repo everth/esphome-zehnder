@@ -16,6 +16,11 @@ static const uint8_t FAN_FRAMESIZE = 16;
 static const uint8_t FAN_TX_FRAMES = 4;
 static const uint8_t FAN_TX_RETRIES = 50;
 static const uint32_t FAN_REPLY_TIMEOUT_MS = 500;
+// Hold the radio in TX mode long enough for nRF905 AUTO_RETRAN to fire the
+// payload multiple times (~10–15 copies at 50 kbps with 16-byte payload).
+// Sniffed physical-remote bursts span ~180 ms for 4 copies; 100 ms here gives
+// a comparable on-air presence without blocking the main loop for too long.
+static const uint32_t FAN_TX_HOLD_MS = 100;
 static const uint32_t NETWORK_LINK_ID = 0xA55A5AA5;
 
 // Fan device types and commands

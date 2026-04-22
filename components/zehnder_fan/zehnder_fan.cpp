@@ -185,12 +185,19 @@ void ZehnderFanProtocol::process() {
             // Nothing to do
             break;
             
-        case RadioOperationState::TRANSMITTING:
-            // Check if we can move to receive mode (transmission should be quick)
-            pending_op_.state = RadioOperationState::WAITING_RESPONSE;
-            pending_op_.start_time = millis();
-            radio_->set_mode_receive();
+        case RadioOperationState::TRANSMITTING: {
+            // Hold TX for FAN_TX_HOLD_MS so AUTO_RETRAN (config bit set in init)
+            // fires the payload multiple times. A single short TX works only at
+            // very close range; the physical remote transmits each command 4–8
+            // times per press, and we must do the same to be reliable.
+            uint32_t tx_elapsed = millis() - pending_op_.start_time;
+            if (tx_elapsed >= FAN_TX_HOLD_MS) {
+                pending_op_.state = RadioOperationState::WAITING_RESPONSE;
+                pending_op_.start_time = millis();
+                radio_->set_mode_receive();
+            }
             break;
+        }
             
         case RadioOperationState::WAITING_RESPONSE:
             // Check for received data
@@ -213,9 +220,11 @@ void ZehnderFanProtocol::process() {
 
 void ZehnderFanProtocol::start_transmit() {
     radio_->write_tx_payload(pending_op_.tx_payload, FAN_FRAMESIZE);
-    pending_op_.state = RadioOperationState::TRANSMITTING;
     radio_->set_mode_transmit();
-    // Note: We'll move to WAITING_RESPONSE in the next process() call
+    pending_op_.state = RadioOperationState::TRANSMITTING;
+    pending_op_.start_time = millis();  // reused as TX-hold start; reset for RX wait later
+    // The state machine will hold TRANSMITTING for FAN_TX_HOLD_MS (so AUTO_RETRAN
+    // can fire multiple copies) before switching to WAITING_RESPONSE in process().
 }
 
 void ZehnderFanProtocol::handle_response() {
