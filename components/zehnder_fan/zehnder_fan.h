@@ -207,6 +207,10 @@ public:
     // Service function to initiate pairing
     void start_pairing();
 
+    // Boost the fan to MAX speed for the given number of minutes (0 = cancel → Low).
+    // Matches the ZRF remote's 4 timer buttons: 10/30/60 min and "timer off" (0 min).
+    void start_boost(uint8_t minutes);
+
     // Sniffer mode — passively log every frame received on the paired network.
     // While sniffing, normal fan control and pairing are rejected.
     void start_sniffer();

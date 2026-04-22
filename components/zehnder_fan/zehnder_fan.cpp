@@ -171,8 +171,11 @@ void ZehnderFanProtocol::start_set_speed(const FanPairingInfo &pairing_info, uin
     // not a TTL as earlier code comments implied. Sniffed traffic shows it varying
     // randomly per transmit. We use a fixed value since the fan accepts duplicates.
     pending_op_.tx_payload[4] = 0xFA; // token
-    pending_op_.tx_payload[5] = (timer_minutes > 0) ? FAN_FRAME_SETTIMER : FAN_FRAME_SETSPEED;
-    pending_op_.tx_payload[6] = (timer_minutes > 0) ? 0x02 : 0x01; // Number of parameters
+    // Sniffed ZRF (0x16) remote always uses SETTIMER(speed, minutes) with 2 params,
+    // even for "timer off" (which it sends as SETTIMER(Low, 0)). Matching this exactly
+    // avoids the fan silently ignoring our frames.
+    pending_op_.tx_payload[5] = FAN_FRAME_SETTIMER;
+    pending_op_.tx_payload[6] = 0x02; // 2 parameters
     pending_op_.tx_payload[7] = speed;
     pending_op_.tx_payload[8] = timer_minutes;
     
@@ -484,7 +487,7 @@ void ZehnderFanComponent::control(const fan::FanCall &call) {
         this->pending_state_change_ = true;
     }
 
-    uint8_t fan_speed = FAN_SPEED_AUTO; // Off
+    uint8_t fan_speed = FAN_SPEED_LOW; // Off = Low (always-on baseline, matches ZRF remote "timer off" = SETTIMER(Low, 0))
     if (this->pending_fan_state_) {
         switch (this->pending_fan_speed_) {
             case 1: fan_speed = FAN_SPEED_LOW; break;
@@ -503,6 +506,33 @@ void ZehnderFanComponent::control(const fan::FanCall &call) {
     // Start async operation
     this->component_state_ = ComponentOperationState::SETTING_SPEED;
     this->fan_protocol_->start_set_speed(this->pairing_info_.value(), fan_speed, timer);
+}
+
+void ZehnderFanComponent::start_boost(uint8_t minutes) {
+    if (this->sniffer_active_) {
+        ESP_LOGW(TAG, "Cannot boost: Sniffer mode active. Stop sniffer first.");
+        return;
+    }
+    if (!this->pairing_info_.has_value()) {
+        ESP_LOGE(TAG, "Cannot boost: Not paired.");
+        return;
+    }
+    if (this->component_state_ != ComponentOperationState::IDLE) {
+        ESP_LOGW(TAG, "Cannot boost: Radio operation in progress.");
+        return;
+    }
+
+    // minutes == 0 means "timer off" → drop to Low, matching the ZRF remote's 4th button.
+    uint8_t speed = (minutes > 0) ? FAN_SPEED_MAX : FAN_SPEED_LOW;
+    ESP_LOGD(TAG, "Boost: speed=%d, timer=%d min", speed, minutes);
+
+    // Keep HA's fan entity state roughly in sync with what we just commanded.
+    this->state = (minutes > 0);
+    this->speed = (minutes > 0) ? 4 : 1;
+    this->publish_state();
+
+    this->component_state_ = ComponentOperationState::SETTING_SPEED;
+    this->fan_protocol_->start_set_speed(this->pairing_info_.value(), speed, minutes);
 }
 
 void ZehnderFanComponent::start_pairing() {
