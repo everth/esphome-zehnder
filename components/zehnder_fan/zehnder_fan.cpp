@@ -167,7 +167,10 @@ void ZehnderFanProtocol::start_set_speed(const FanPairingInfo &pairing_info, uin
     pending_op_.tx_payload[1] = pairing_info.main_unit_id;
     pending_op_.tx_payload[2] = FAN_TYPE_REMOTE_CONTROL;
     pending_op_.tx_payload[3] = pairing_info.my_device_id;
-    pending_op_.tx_payload[4] = 0xFA; // TTL
+    // Byte 4 is a per-transmit token (used by the protocol to deduplicate retransmits),
+    // not a TTL as earlier code comments implied. Sniffed traffic shows it varying
+    // randomly per transmit. We use a fixed value since the fan accepts duplicates.
+    pending_op_.tx_payload[4] = 0xFA; // token
     pending_op_.tx_payload[5] = (timer_minutes > 0) ? FAN_FRAME_SETTIMER : FAN_FRAME_SETSPEED;
     pending_op_.tx_payload[6] = (timer_minutes > 0) ? 0x02 : 0x01; // Number of parameters
     pending_op_.tx_payload[7] = speed;
@@ -559,11 +562,11 @@ void ZehnderFanComponent::log_sniffed_frame_() {
 
     // Decode the 16-byte frame into its known fields.
     // Layout matches start_set_speed / pairing frames:
-    //   [0] rx_type, [1] rx_id, [2] tx_type, [3] tx_id, [4] TTL,
+    //   [0] rx_type, [1] rx_id, [2] tx_type, [3] tx_id, [4] token (random per-tx dedup byte),
     //   [5] frame_type, [6] param_count, [7..] params
     ESP_LOGI(TAG,
              "[SNIFF] rx_type=0x%02X rx_id=0x%02X tx_type=0x%02X tx_id=0x%02X "
-             "ttl=0x%02X frame=0x%02X params=%u p1=0x%02X p2=0x%02X "
+             "token=0x%02X frame=0x%02X params=%u p1=0x%02X p2=0x%02X "
              "cd=%d am=%d | raw=%02X%02X%02X%02X%02X%02X%02X%02X"
              "%02X%02X%02X%02X%02X%02X%02X%02X",
              p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8],

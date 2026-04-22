@@ -23,6 +23,9 @@ enum {
     FAN_TYPE_BROADCAST = 0x00,
     FAN_TYPE_MAIN_UNIT = 0x01,
     FAN_TYPE_REMOTE_CONTROL = 0x03,
+    // Observed via sniffer on a ComfoAir E300/E400 with a ZRF remote (tx_type=0x16).
+    // Not documented in the original fork; treat as another remote-control variant.
+    FAN_TYPE_REMOTE_CONTROL_ZRF = 0x16,
 };
 enum {
     FAN_FRAME_SETSPEED = 0x02,
